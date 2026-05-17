@@ -1,0 +1,4 @@
+PyQt6>=6.4.0
+paramiko>=3.0.0
+pyte>=0.8.0
+tomli-w>=1.0.0
