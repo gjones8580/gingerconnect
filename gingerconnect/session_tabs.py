@@ -122,7 +122,7 @@ class SessionTabs(QTabWidget):
         widget = RdpPlaceholder(session)
         widget.reconnect_requested.connect(lambda c=conn: self.reconnect_requested.emit(c))
         idx = self.addTab(widget, conn.name or conn.target.host)
-        self._set_close_button(idx)
+        self._set_close_button(idx, conn.name)
         self._tab_map[conn.name] = idx
         self._widgets[conn.name] = widget
         self._connections[conn.name] = conn
@@ -137,26 +137,25 @@ class SessionTabs(QTabWidget):
 
         self._hide_empty()
         idx = self.addTab(terminal, conn.name or conn.target.host)
-        self._set_close_button(idx)
+        self._set_close_button(idx, conn.name)
         self._tab_map[conn.name] = idx
         self._widgets[conn.name] = terminal
         self._connections[conn.name] = conn
         self.setCurrentIndex(idx)
         terminal.setFocus()
 
-    def _set_close_button(self, idx: int) -> None:
+    def _set_close_button(self, idx: int, conn_name: str) -> None:
         btn = QPushButton("✕")
         btn.setFixedSize(16, 16)
         btn.setObjectName("TabCloseButton")
-        btn.clicked.connect(lambda checked=False, b=btn: self._close_by_button(b))
+        # Capture conn_name by value so the lookup stays correct if tabs reorder.
+        btn.clicked.connect(lambda _checked=False, name=conn_name: self._close_by_name(name))
         self.tabBar().setTabButton(idx, QTabBar.ButtonPosition.RightSide, btn)
 
-    def _close_by_button(self, button: QPushButton) -> None:
-        bar = self.tabBar()
-        for i in range(bar.count()):
-            if bar.tabButton(i, QTabBar.ButtonPosition.RightSide) is button:
-                self._on_tab_close(i)
-                break
+    def _close_by_name(self, conn_name: str) -> None:
+        idx = self._tab_map.get(conn_name)
+        if idx is not None:
+            self._on_tab_close(idx)
 
     def get_rdp_placeholder(self, connection: Connection) -> Optional[RdpPlaceholder]:
         w = self._widgets.get(connection.name)

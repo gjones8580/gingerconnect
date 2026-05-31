@@ -11,7 +11,12 @@ from gingerconnect.models.connection import Connection, SIA, Target
 
 
 class ConnectionDialog(QDialog):
-    def __init__(self, parent: Optional[QWidget] = None, connection: Optional[Connection] = None) -> None:
+    def __init__(
+        self,
+        parent: Optional[QWidget] = None,
+        connection: Optional[Connection] = None,
+        default_group: Optional[str] = None,
+    ) -> None:
         super().__init__(parent)
         self._editing = connection is not None
         self.setWindowTitle("Edit Connection" if self._editing else "Add Connection")
@@ -100,9 +105,11 @@ class ConnectionDialog(QDialog):
         self._protocol.currentTextChanged.connect(self._update_visibility)
         self._mode.currentTextChanged.connect(self._update_visibility)
 
-        # Populate if editing
+        # Populate if editing, or pre-fill group when adding inside a group
         if connection:
             self._populate(connection)
+        elif default_group:
+            self._group.setText(default_group)
 
         self._update_visibility()
 

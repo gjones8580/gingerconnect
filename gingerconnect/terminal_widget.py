@@ -1,13 +1,14 @@
 from __future__ import annotations
 import queue
+from collections import deque
 from typing import Optional
 
 import pyte
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QPoint, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QColor, QFont, QFontMetrics, QKeyEvent, QPainter, QResizeEvent,
 )
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QApplication, QMenu, QWidget
 
 from gingerconnect.protocols.ssh import SSHConnection
 
@@ -34,6 +35,7 @@ _ANSI: dict[str, str] = {
 _FG_DEFAULT = "#cdd6f4"
 _BG_DEFAULT = "#1e1e2e"
 _CURSOR_COLOR = "#89b4fa"
+_SEL_BG = "#264f78"
 
 _KEY_MAP: dict[int, bytes] = {
     Qt.Key.Key_Return:   b"\r",
@@ -83,7 +85,6 @@ def _resolve_color(color: object, is_bg: bool) -> str:
 
 
 def _256color(idx: int) -> str:
-    names = list(_ANSI.keys())  # first 16 names match ANSI order
     _standard = [
         "#45475a", "#f38ba8", "#a6e3a1", "#f9e2af",
         "#89b4fa", "#cba6f7", "#89dceb", "#bac2de",
@@ -102,6 +103,27 @@ def _256color(idx: int) -> str:
         return f"#{v(r):02x}{v(g):02x}{v(b):02x}"
     grey = 8 + (idx - 232) * 10
     return f"#{grey:02x}{grey:02x}{grey:02x}"
+
+
+class ScrollbackScreen(pyte.Screen):
+    """pyte Screen that captures lines as they scroll off the top."""
+
+    def __init__(self, columns: int, lines: int, max_history: int = 5000) -> None:
+        super().__init__(columns, lines)
+        self._scrollback: deque[dict] = deque(maxlen=max_history)
+
+    def index(self) -> None:
+        try:
+            margins = self.margins
+            top = margins.top if margins else 0
+            bottom = margins.bottom if margins else (self.lines - 1)
+        except AttributeError:
+            top, bottom = 0, self.lines - 1
+
+        if self.cursor.y == bottom:
+            self._scrollback.append(dict(self.buffer.get(top, {})))
+
+        super().index()
 
 
 class TerminalWidget(QWidget):
@@ -123,11 +145,19 @@ class TerminalWidget(QWidget):
         self._ch = m.height()
         self._ascent = m.ascent()
 
-        # pyte
+        # pyte with scrollback
         self._cols, self._rows = 80, 24
-        self._screen = pyte.Screen(self._cols, self._rows)
+        self._screen = ScrollbackScreen(self._cols, self._rows)
         self._stream = pyte.ByteStream(self._screen)
         self._cursor_visible = True
+
+        # Scrollback state
+        self._scroll_offset = 0  # lines scrolled above the live view
+
+        # Selection state (display-coordinate row/col pairs)
+        self._sel_anchor: Optional[tuple[int, int]] = None
+        self._sel_end: Optional[tuple[int, int]] = None
+        self._selecting = False
 
         # Queue for thread-safe data passing
         self._queue: queue.Queue[bytes | None] = queue.Queue()
@@ -146,14 +176,13 @@ class TerminalWidget(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
         self.setMinimumSize(self._cw * 40, self._ch * 12)
 
-        # Caller must have already called ssh.connect(); we just start I/O.
         self._connected = True
         ssh.start_io(on_data=self._queue.put, on_close=self._enqueue_close)
 
     # ── queue callbacks (called from background thread) ────────────────────
 
     def _enqueue_close(self) -> None:
-        self._queue.put(None)  # sentinel
+        self._queue.put(None)
 
     # ── main-thread processing ─────────────────────────────────────────────
 
@@ -182,25 +211,113 @@ class TerminalWidget(QWidget):
         y = cy * self._ch
         self.update(x, y, self._cw, self._ch)
 
+    # ── scrollback helpers ─────────────────────────────────────────────────
+
+    def _get_display_line(self, display_row: int) -> dict:
+        """Return the line dict for a given display row, accounting for scroll."""
+        hist = self._screen._scrollback
+        hist_len = len(hist)
+        if self._scroll_offset == 0:
+            return self._screen.buffer.get(display_row, {})
+        combined_idx = hist_len - self._scroll_offset + display_row
+        if combined_idx < 0:
+            return {}
+        if combined_idx < hist_len:
+            return hist[combined_idx]
+        screen_row = combined_idx - hist_len
+        return self._screen.buffer.get(screen_row, {})
+
+    # ── selection helpers ──────────────────────────────────────────────────
+
+    def _pixel_to_cell(self, pos: QPoint) -> tuple[int, int]:
+        row = max(0, min(self._rows - 1, pos.y() // self._ch))
+        col = max(0, min(self._cols - 1, pos.x() // self._cw))
+        return (row, col)
+
+    def _is_cell_selected(self, row: int, col: int) -> bool:
+        if self._sel_anchor is None or self._sel_end is None:
+            return False
+        if self._sel_anchor == self._sel_end:
+            return False
+        r1, c1 = self._sel_anchor
+        r2, c2 = self._sel_end
+        if (r1, c1) > (r2, c2):
+            r1, c1, r2, c2 = r2, c2, r1, c1
+        if row < r1 or row > r2:
+            return False
+        if r1 == r2:
+            return c1 <= col <= c2
+        if row == r1:
+            return col >= c1
+        if row == r2:
+            return col <= c2
+        return True
+
+    def _copy_selection(self) -> None:
+        if (self._sel_anchor is None or self._sel_end is None
+                or self._sel_anchor == self._sel_end):
+            return
+        r1, c1 = self._sel_anchor
+        r2, c2 = self._sel_end
+        if (r1, c1) > (r2, c2):
+            r1, c1, r2, c2 = r2, c2, r1, c1
+        lines = []
+        for row in range(r1, r2 + 1):
+            sc = c1 if row == r1 else 0
+            ec = (c2 + 1) if row == r2 else self._cols
+            line_data = self._get_display_line(row)
+            chars = []
+            for col in range(sc, ec):
+                char = line_data.get(col)
+                chars.append(char.data if char and char.data else " ")
+            lines.append("".join(chars).rstrip())
+        QApplication.clipboard().setText("\n".join(lines))
+
+    def _paste_clipboard(self) -> None:
+        if not self._connected:
+            return
+        text = QApplication.clipboard().text()
+        if text:
+            self.ssh.write(text.encode("utf-8"))
+
+    def _show_context_menu(self, global_pos: QPoint) -> None:
+        menu = QMenu(self)
+        has_sel = (
+            self._sel_anchor is not None
+            and self._sel_end is not None
+            and self._sel_anchor != self._sel_end
+        )
+        copy_act = menu.addAction("Copy")
+        copy_act.setEnabled(has_sel)
+        paste_act = menu.addAction("Paste")
+        action = menu.exec(global_pos)
+        if action == copy_act:
+            self._copy_selection()
+        elif action == paste_act:
+            self._paste_clipboard()
+
     # ── painting ───────────────────────────────────────────────────────────
 
     def paintEvent(self, _event) -> None:  # type: ignore[override]
         painter = QPainter(self)
         painter.setFont(self._font)
 
-        buf = self._screen.buffer
         cw, ch = self._cw, self._ch
 
         painter.fillRect(self.rect(), QColor(_BG_DEFAULT))
 
         for row in range(self._rows):
-            line = buf.get(row, {})
+            line = self._get_display_line(row)
             base_y = row * ch
 
             col = 0
             while col < self._cols:
+                is_selected = self._is_cell_selected(row, col)
                 char = line.get(col)
+
                 if char is None:
+                    if is_selected:
+                        painter.fillRect(col * cw, base_y, cw, ch, QColor(_SEL_BG))
                     col += 1
                     continue
 
@@ -213,11 +330,11 @@ class TerminalWidget(QWidget):
                 if reverse:
                     fg_str, bg_str = bg_str, fg_str
 
-                # Background
-                if bg_str != _BG_DEFAULT:
-                    painter.fillRect(col * cw, base_y, cw, ch, QColor(bg_str))
+                effective_bg = _SEL_BG if is_selected else bg_str
 
-                # Text
+                if effective_bg != _BG_DEFAULT:
+                    painter.fillRect(col * cw, base_y, cw, ch, QColor(effective_bg))
+
                 if data.strip():
                     if bold:
                         f = QFont(self._font)
@@ -228,7 +345,6 @@ class TerminalWidget(QWidget):
                     painter.setPen(QColor(fg_str))
                     painter.drawText(col * cw, base_y + self._ascent, data)
 
-                # Underline
                 if getattr(char, "underscore", False):
                     painter.setPen(QColor(fg_str))
                     painter.drawLine(
@@ -238,12 +354,12 @@ class TerminalWidget(QWidget):
 
                 col += 1
 
-        # Cursor
-        if self._cursor_visible and self.hasFocus():
+        # Cursor only visible on the live screen, not scrollback
+        if self._cursor_visible and self.hasFocus() and self._scroll_offset == 0:
             cx = self._screen.cursor.x
             cy = self._screen.cursor.y
             painter.fillRect(cx * cw, cy * ch, cw, ch, QColor(_CURSOR_COLOR))
-            char = buf.get(cy, {}).get(cx)
+            char = self._screen.buffer.get(cy, {}).get(cx)
             if char and char.data.strip():
                 painter.setFont(self._font)
                 painter.setPen(QColor(_BG_DEFAULT))
@@ -251,12 +367,31 @@ class TerminalWidget(QWidget):
 
     # ── keyboard input ─────────────────────────────────────────────────────
 
+    def focusNextPrevChild(self, _next: bool) -> bool:
+        # Prevent Qt from stealing Tab/Shift+Tab for focus traversal.
+        # keyPressEvent handles Tab → \t forwarded to SSH.
+        return False
+
     def keyPressEvent(self, event: QKeyEvent) -> None:
         key = event.key()
         text = event.text()
         mods = event.modifiers()
         ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
         shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+
+        # Clipboard shortcuts — handled without touching scroll or selection
+        if ctrl and shift:
+            if key == Qt.Key.Key_C:
+                self._copy_selection()
+                return
+            if key == Qt.Key.Key_V:
+                self._paste_clipboard()
+                return
+
+        # All other keystrokes reset scroll to live view and clear selection
+        self._scroll_offset = 0
+        self._sel_anchor = None
+        self._sel_end = None
 
         if key in _KEY_MAP:
             if key == Qt.Key.Key_Up and ctrl:
@@ -284,6 +419,47 @@ class TerminalWidget(QWidget):
         if text:
             self.ssh.write(text.encode("utf-8"))
 
+    # ── mouse input ────────────────────────────────────────────────────────
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        if event.button() == Qt.MouseButton.LeftButton:
+            cell = self._pixel_to_cell(event.position().toPoint())
+            self._sel_anchor = cell
+            self._sel_end = cell
+            self._selecting = True
+            self.update()
+        elif event.button() == Qt.MouseButton.RightButton:
+            self._show_context_menu(event.globalPosition().toPoint())
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
+        if self._selecting:
+            cell = self._pixel_to_cell(event.position().toPoint())
+            if cell != self._sel_end:
+                self._sel_end = cell
+                self.update()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._selecting = False
+        super().mouseReleaseEvent(event)
+
+    # ── scroll wheel ───────────────────────────────────────────────────────
+
+    def wheelEvent(self, event) -> None:  # type: ignore[override]
+        delta = event.angleDelta().y()
+        step = 3
+        if delta > 0:
+            self._scroll_offset = min(
+                self._scroll_offset + step,
+                len(self._screen._scrollback),
+            )
+        else:
+            self._scroll_offset = max(0, self._scroll_offset - step)
+        self.update()
+        event.accept()
+
     # ── resize ─────────────────────────────────────────────────────────────
 
     def resizeEvent(self, event: QResizeEvent) -> None:
@@ -293,6 +469,8 @@ class TerminalWidget(QWidget):
         if cols != self._cols or rows != self._rows:
             self._cols, self._rows = cols, rows
             self._screen.resize(rows, cols)
+            self._screen._scrollback.clear()
+            self._scroll_offset = 0
             if self._connected:
                 self.ssh.resize(cols, rows)
 

@@ -448,6 +448,8 @@ class MainWindow(QMainWindow):
         )
 
         menu = QMenu(self)
+        add_conn_act = menu.addAction("Add Connection")
+        menu.addSeparator()
         sub_act = menu.addAction("Add Sub-group")
         rename_act = menu.addAction("Rename")
         menu.addSeparator()
@@ -455,7 +457,12 @@ class MainWindow(QMainWindow):
         del_act.setEnabled(not has_content)
 
         action = menu.exec(global_pos)
-        if action == sub_act:
+        if action == add_conn_act:
+            dlg = ConnectionDialog(self, default_group=group_name)
+            if dlg.exec():
+                self._conn_mgr.add(dlg.get_connection())
+                self._reload_sidebar()
+        elif action == sub_act:
             name, ok = QInputDialog.getText(
                 self, "New Sub-group",
                 f"Sub-group name under '{group_name.rsplit('/', 1)[-1]}':",

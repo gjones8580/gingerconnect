@@ -1,33 +1,10 @@
-# Python
 __pycache__/
-*.py[cod]
+*.pyc
 *.pyo
-*.pyd
-*.so
-*.egg
-*.egg-info/
-dist/
-build/
-.eggs/
-.mypy_cache/
-.ruff_cache/
-.pytest_cache/
-
-# Virtual environments
 .venv/
 venv/
-env/
-
-# User configuration (contains credentials)
-~/.config/gingerconnect/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
+dist/
+build/
+*.egg-info/
+.env
+connections.toml
