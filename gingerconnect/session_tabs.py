@@ -17,6 +17,7 @@ class RdpPlaceholder(QWidget):
     def __init__(self, session: Session, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._session = session
+        self._output_lines: list[str] = []
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(12)
@@ -67,17 +68,28 @@ class RdpPlaceholder(QWidget):
     def set_command(self, cmd: list[str]) -> None:
         self._cmd_lbl.setText(" ".join(cmd))
 
+    _MAX_OUTPUT_LINES = 12
+
     def set_output(self, text: str) -> None:
-        if text.strip():
-            self._output_lbl.setText(text.strip())
-            self._output_lbl.setVisible(True)
+        # Accumulate the tail of FreeRDP output instead of overwriting, so a
+        # failure that prints before the last chunk isn't lost. QProcess hands
+        # us arbitrary chunks, so split on newlines and keep the last N lines.
+        new_lines = [ln for ln in text.splitlines() if ln.strip()]
+        if not new_lines:
+            return
+        self._output_lines.extend(new_lines)
+        del self._output_lines[: -self._MAX_OUTPUT_LINES]
+        self._output_lbl.setText("\n".join(self._output_lines))
+        self._output_lbl.setVisible(True)
 
     def set_status(self, state: SessionState, message: str = "") -> None:
         if state == SessionState.CONNECTED:
             self._status_lbl.setText("RDP session active (external window)")
             self._status_lbl.setStyleSheet("font-size:13px;color:#a6e3a1;")
             self._reconnect_btn.setVisible(False)
-            self._output_lbl.setVisible(False)
+            # Keep any accumulated output visible — proc.started fires as soon as
+            # the process launches, well before FreeRDP reports a connection
+            # failure, so hiding here would swallow late errors.
         elif state == SessionState.DISCONNECTED:
             self._status_lbl.setText("Session ended")
             self._status_lbl.setStyleSheet("font-size:13px;color:#6c7086;")

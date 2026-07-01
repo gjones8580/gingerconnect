@@ -26,6 +26,15 @@ def build_command(
             "/cert:ignore",
             "+clipboard",
             "/dynamic-resolution",
+            # CyberArk's MFA-method selection screen is a static interstitial that
+            # the connector draws once and never updates. FreeRDP 3.x's RDP8
+            # graphics pipeline (GFX) leaves such a frame black until the next
+            # server update forces a repaint, so it never renders. Disabling GFX,
+            # forcing software GDI, and 16bpp makes the connector fall back to
+            # plain bitmap updates that paint immediately. See FreeRDP #4371/#10864.
+            "-gfx",
+            "/gdi:sw",
+            "/bpp:16",
         ]
     else:
         cmd = [
