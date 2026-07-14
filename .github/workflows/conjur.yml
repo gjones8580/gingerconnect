@@ -1,0 +1,27 @@
+name: conjur-poc
+on: workflow_dispatch
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  test-conjur:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch secret from Conjur Cloud
+        uses: cyberark/conjur-action@v2.2.2
+        with:
+          url: https://csse.secretsmgr.cyberark.cloud
+          account: conjur
+          authn_id: github
+          secrets: data/vault/GJ-WindowsApp/Operating System-GJ-JonesMotor-DomainAccounts-jonesmotor.com-app1/password|TEST_SECRET
+
+      - name: Prove it worked
+        run: |
+          if [ -n "$TEST_SECRET" ]; then
+            echo "✅ Retrieved secret, length: ${#TEST_SECRET}"
+          else
+            echo "❌ Secret was empty"
+            exit 1
+          fi
