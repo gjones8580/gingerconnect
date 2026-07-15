@@ -59,7 +59,7 @@ jobs:
       - name: Fetch secret from Conjur Cloud
         uses: cyberark/conjur-action@v2.2.2
         with:
-          url: https://csse.secretsmgr.cyberark.cloud
+          url: https://csse.secretsmgr.cyberark.cloud/api
           account: conjur
           authn_id: github
           secrets: data/vault/GJ-SpringBoot/demouser-postgres/password|TEST_SECRET
