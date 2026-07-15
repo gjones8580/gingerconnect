@@ -15,14 +15,25 @@ jobs:
             "$ACTIONS_ID_TOKEN_REQUEST_URL" | jq -r '.value')
           echo "JWT length: ${#JWT}"
 
-          STATUS=$(curl -sS -o /tmp/authn_body.txt -w "%{http_code}" \
+          PAYLOAD=$(echo "$JWT" | cut -d. -f2 | tr '_-' '/+')
+          case $(( ${#PAYLOAD} % 4 )) in
+            2) PAYLOAD="${PAYLOAD}==" ;;
+            3) PAYLOAD="${PAYLOAD}=" ;;
+          esac
+          echo "---- decoded claims ----"
+          echo "$PAYLOAD" | base64 -d | jq '{iss, aud, sub, repository, repository_owner, workflow, ref}'
+          echo "-------------------------"
+
+          STATUS=$(curl -sS -D /tmp/headers.txt -o /tmp/authn_body.txt -w "%{http_code}" \
             --data-urlencode "jwt=${JWT}" \
             "https://csse.secretsmgr.cyberark.cloud/api/authn-jwt/github/conjur/authenticate")
 
           echo "Authenticate HTTP status: $STATUS"
+          echo "---- response headers ----"
+          cat /tmp/headers.txt
           echo "---- response body ----"
           cat /tmp/authn_body.txt
-          echo "------------------------"
+          echo "---------------------------"
 
       - name: Fetch secret from Conjur Cloud
         uses: cyberark/conjur-action@v2.2.2
