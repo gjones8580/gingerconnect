@@ -21,7 +21,7 @@ jobs:
             3) PAYLOAD="${PAYLOAD}=" ;;
           esac
           echo "---- decoded claims ----"
-          echo "$PAYLOAD" | base64 -d | jq '{iss, aud, sub, repository, repository_id, repository_owner, workflow, ref}'
+          echo "$PAYLOAD" | base64 -d | jq '{iss, aud, sub, repository, repository_id, workflow, ref}'
           echo "-------------------------"
 
           STATUS=$(curl -sS -D /tmp/headers.txt -o /tmp/authn_body.txt -w "%{http_code}" \
@@ -34,6 +34,27 @@ jobs:
           echo "---- response body ----"
           cat /tmp/authn_body.txt
           echo "---------------------------"
+
+      - name: Debug — raw secret fetch from Conjur Cloud
+        run: |
+          JWT=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL" | jq -r '.value')
+
+          AUTHN_RESPONSE=$(curl -sS \
+            --data-urlencode "jwt=${JWT}" \
+            "https://csse.secretsmgr.cyberark.cloud/api/authn-jwt/github/conjur/authenticate")
+
+          ACCESS_TOKEN=$(echo -n "$AUTHN_RESPONSE" | base64 | tr -d '\n')
+
+          STATUS=$(curl -sS -D /tmp/fetch_headers.txt -o /tmp/fetch_body.txt -w "%{http_code}" \
+            -H "Authorization: Token token=\"$ACCESS_TOKEN\"" \
+            "https://csse.secretsmgr.cyberark.cloud/api/secrets/conjur/variable/data/vault/GJ-SpringBoot/demouser-postgres/password")
+
+          echo "Fetch HTTP status: $STATUS"
+          echo "---- headers ----"
+          cat /tmp/fetch_headers.txt
+          echo "---- body length ----"
+          wc -c /tmp/fetch_body.txt
 
       - name: Fetch secret from Conjur Cloud
         uses: cyberark/conjur-action@v2.2.2
