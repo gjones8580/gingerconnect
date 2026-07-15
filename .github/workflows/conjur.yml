@@ -17,7 +17,7 @@ jobs:
 
           STATUS=$(curl -sS -o /tmp/authn_body.txt -w "%{http_code}" \
             --data-urlencode "jwt=${JWT}" \
-            "https://csse.secretsmgr.cyberark.cloud/authn-jwt/github/conjur/authenticate")
+            "https://csse.secretsmgr.cyberark.cloud/api/authn-jwt/github/conjur/authenticate")
 
           echo "Authenticate HTTP status: $STATUS"
           echo "---- response body ----"
