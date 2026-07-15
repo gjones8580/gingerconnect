@@ -15,7 +15,7 @@ jobs:
           url: https://csse.secretsmgr.cyberark.cloud
           account: conjur
           authn_id: github
-          secrets: data/vault/GJ-WindowsApp/Operating%20System-GJ-JonesMotor-DomainAccounts-jonesmotor.com-app1/password|TEST_SECRET
+          secrets: data/vault/GJ-SpringBoot/demouser-postgres/password|TEST_SECRET
 
       - name: Prove it worked
         run: |
