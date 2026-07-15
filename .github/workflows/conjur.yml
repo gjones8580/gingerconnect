@@ -21,7 +21,7 @@ jobs:
             3) PAYLOAD="${PAYLOAD}=" ;;
           esac
           echo "---- decoded claims ----"
-          echo "$PAYLOAD" | base64 -d | jq '{iss, aud, sub, repository, repository_owner, workflow, ref}'
+          echo "$PAYLOAD" | base64 -d | jq '{iss, aud, sub, repository, repository_id, repository_owner, workflow, ref}'
           echo "-------------------------"
 
           STATUS=$(curl -sS -D /tmp/headers.txt -o /tmp/authn_body.txt -w "%{http_code}" \
