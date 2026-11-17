@@ -409,6 +409,7 @@ class MainWindow(QMainWindow):
     def _on_ssh_closed(self, session: Session, error: str) -> None:
         session.state = SessionState.DISCONNECTED if not error else SessionState.ERROR
         self._sess_mgr.remove(session.connection)
+        self._tabs.close_tab_for(session.connection)
         self._refresh_status_icons()
         msg = f"SSH disconnected: {session.connection.name}"
         if error:
