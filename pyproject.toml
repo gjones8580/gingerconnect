@@ -30,6 +30,11 @@ dependencies = [
     "tomli-w>=1.0.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
 [project.scripts]
 gingerconnect = "gingerconnect.app:main"
 
@@ -39,3 +44,10 @@ include = ["gingerconnect*"]
 
 [tool.setuptools.package-data]
 gingerconnect = ["../GingerConnect.png"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# tests/ is on sys.path so the suite can import its own conftest helpers
+pythonpath = [".", "tests"]
+addopts = "-ra"
+# Qt runs headless via QT_QPA_PLATFORM, which tests/conftest.py sets on import.
